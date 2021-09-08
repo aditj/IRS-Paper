@@ -2,38 +2,42 @@ import numpy as np
 from cvxopt import matrix
 import picos
 
-Ne= 128
+Ne= 256
 H_id = np.matrix(H_id)
 H_d = np.matrix(H_d)
-A_ = H_id.H @ H_id
+A_ = picos.Constant(H_id.H @ H_id)
 u_ = H_id.H @ H_d
-u_abs2 = picos.Constant(np.multiply(u_,u_.conjugate()))
-comp_eye = np.eye(Ne).astype(np.complex128)
-comp_zero = np.zeros_like(A_)
-M_u = np.concatenate([A_, np.eye(Ne)], axis=0)
-M_l = np.concatenate([np.eye(Ne),np.zeros_like(A_)], axis=0)
-M_ = picos.Constant(np.matrix(np.concatenate([M_u, M_l], axis=1)))
-W_ = picos.HermitianVariable("W_", 2*Ne)
-# Define and solve the CVXPY problem.
+u_abs2 = picos.Constant(np.multiply(u_,u_.conjugate())[:])
+w1 = picos.HermitianVariable("w1",Ne)
+w2 = picos.HermitianVariable("w2",Ne)
+w3 = picos.HermitianVariable("w3",Ne)
+W_ = picos.block([[w1,w2],[w2.H,w3]], shapes = ((Ne,Ne), (Ne,Ne)))
+M_ = picos.block([[A_,"I"],["I",0]], shapes = ((Ne,Ne), (Ne,Ne)))
+
+
+
+# Define and solve the picos problem.
 # The operator >> denotes matrix inequality.
+obj = picos.trace(w1*A_+2*w2).refined
 
-
-prob = picos.Problem()
-prob.set_objective("max",picos.trace(W_*M_))
 constraints = [W_ >> 0]
 constraints += [
-    W_[i,i].real <= 1 for i in range(Ne)
+    w1[i,i].real <= 1 for i in range(Ne)
 ]
 
 constraints += [
-    W_[dict(enumerate([range(Ne,2*Ne)]*2))] == u_abs2[:]
+    picos.maindiag(w3) == u_abs2
 ]
-prob.add_list_of_constraints(constraints)
-print(prob)
+
+P = picos.Problem()
+P.set_objective("max", obj)
+P.add_list_of_constraints(constraints)
+print(P)
+
 prob.solve(solver="cvxopt",verbose=True)
-print("\nOptimal W_:", W_, sep="\n")
-W_sub = W_.value[0:Ne,0:Ne]
-w,v = np.linalg.eig(W_sub)
+print("\nOptimal W_sub:", w1, sep="\n")
+
+w,v = np.linalg.eig(w1.value)
 Urnk = len([s for s in w if abs(s) > 1e-6])
 print("\nrank(W_sub) =", Urnk)
 if np.linalg.matrix_rank(W_sub) ==1:
